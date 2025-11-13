@@ -1,0 +1,1768 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Floorplan Generator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            height: 100vh;
+            background-color: #f5f5f5;
+        }
+
+        .panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+        }
+
+        .left-panel {
+            border-right: 2px solid #ddd;
+        }
+
+        h2 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        textarea {
+            flex: 1;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            resize: none;
+            background-color: white;
+        }
+
+        button {
+            margin-top: 15px;
+            padding: 12px 24px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        .download-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .download-buttons button {
+            margin-top: 0;
+            padding: 8px 16px;
+            font-size: 14px;
+            background-color: #2196F3;
+        }
+
+        .download-buttons button:hover {
+            background-color: #1976D2;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+
+        .controls button {
+            margin-top: 0;
+            padding: 8px 16px;
+            font-size: 14px;
+            background-color: #666;
+        }
+
+        .controls button:hover {
+            background-color: #555;
+        }
+
+        .zoom-info {
+            color: #666;
+            font-size: 14px;
+            margin-left: auto;
+            cursor: help;
+        }
+
+        .svg-container {
+            flex: 1;
+            background-color: white;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .svg-container svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .error {
+            color: #d32f2f;
+            margin-top: 10px;
+            padding: 15px;
+            background-color: #ffebee;
+            border: 1px solid #ef5350;
+            border-radius: 5px;
+            display: none;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="panel left-panel">
+        <h2>Measurement Plan</h2>
+        <textarea id="planInput">"Living Room":
+  w1:
+    - 10"
+    - Window 6'8"
+    - 10"
+    - turn-right
+
+  w2:
+    - 2'6"
+    - Door 20" to:"Master Bathroom" in:right
+    - 4'2"
+    - turn-left
+
+  w3:
+    - 8'4"
+    - turn-right
+
+  w4:
+    - 100"
+    - turn-right
+
+  w5:
+    - 7'6"
+    - Door 1'8" out:left
+    - 90"
+    - turn-right
+
+  w6:
+    - 16'8"
+    - turn-right
+
+"Master Bathroom":
+  w1:
+    - 10"
+    - Window 80"
+    - 10"
+    - turn-right
+
+  w2:
+    - 100"
+    - turn-right
+
+  w3:
+    - 8'4"
+    - turn-right
+
+  w4:
+    - 50"
+    - Door 1'8" to:"Living Room"
+    - 30"
+    - turn-right</textarea>
+        <button onclick="generateFloorplan()">Generate Floorplan</button>
+        <div id="errorMsg" class="error"></div>
+    </div>
+
+    <div class="panel">
+        <h2>Visual Floorplan</h2>
+        <div class="controls">
+            <button onclick="resetZoom()" title="Ctrl+0">Reset View</button>
+            <button onclick="zoomIn()" title="Ctrl++">Zoom In</button>
+            <button onclick="zoomOut()" title="Ctrl+-">Zoom Out</button>
+            <label style="margin-left: 20px; color: #666;">Units:
+                <select id="unitSelector" onchange="changeDisplayUnit()" style="margin-left: 5px; padding: 4px 8px; border-radius: 3px; border: 1px solid #ccc;">
+                    <option value="inches">Inches (")</option>
+                    <option value="feet" selected>Feet (')</option>
+                    <option value="cm">Centimeters (cm)</option>
+                    <option value="m">Meters (m)</option>
+                </select>
+            </label>
+            <span class="zoom-info" id="zoomInfo" title="Use Ctrl+Arrows to pan">100%</span>
+        </div>
+        <div class="svg-container" id="svgContainer">
+            <svg id="floorplan" width="800" height="600"></svg>
+        </div>
+        <div class="download-buttons">
+            <button onclick="downloadSVG()">Download SVG</button>
+            <button onclick="downloadPNG()">Download PNG</button>
+            <button onclick="downloadPDF()">Download PDF</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <script>
+        const SCALE = 2; // pixels per inch
+        let displayUnit = 'feet'; // Default display unit
+
+        // Unit conversion functions (all convert to/from inches)
+        const unitConversions = {
+            inches: { toInches: (v) => v, fromInches: (v) => v, symbol: '"' },
+            feet: { toInches: (v) => v * 12, fromInches: (v) => v / 12, symbol: "'" },
+            cm: { toInches: (v) => v / 2.54, fromInches: (v) => v * 2.54, symbol: 'cm' },
+            m: { toInches: (v) => v / 0.0254, fromInches: (v) => v * 0.0254, symbol: 'm' }
+        };
+
+        // Parse a dimension string and return value in inches
+        function parseDimension(dimStr) {
+            dimStr = dimStr.trim();
+
+            // Feet and inches: 6'5" or 6'5"1/2 or 6' 5" 1/2
+            const feetInchesMatch = dimStr.match(/^(\d+)'(?:\s*(\d+(?:\s+\d+\/\d+)?)")?(?:\s*(\d+\/\d+))?$/);
+            if (feetInchesMatch) {
+                const feet = parseInt(feetInchesMatch[1]);
+                let inches = 0;
+                if (feetInchesMatch[2]) {
+                    inches = parseFraction(feetInchesMatch[2]);
+                }
+                if (feetInchesMatch[3]) {
+                    inches += parseFraction(feetInchesMatch[3]);
+                }
+                return feet * 12 + inches;
+            }
+
+            // Inches with fraction: 17" 3/4 or 17 3/4" or 17"3/4
+            const inchFractionMatch = dimStr.match(/^(\d+(?:\.\d+)?)"?\s*(\d+\/\d+)"?$/);
+            if (inchFractionMatch) {
+                const whole = parseFloat(inchFractionMatch[1]);
+                const fraction = parseFraction(inchFractionMatch[2]);
+                return whole + fraction;
+            }
+
+            // Just inches with decimal: 17.25" or 17.25
+            const inchDecimalMatch = dimStr.match(/^(\d+(?:\.\d+)?)"?$/);
+            if (inchDecimalMatch) {
+                return parseFloat(inchDecimalMatch[1]);
+            }
+
+            // Centimeters: 600.5cm or 600.5 cm
+            const cmMatch = dimStr.match(/^(\d+(?:\.\d+)?)\s*cm$/i);
+            if (cmMatch) {
+                return parseFloat(cmMatch[1]) / 2.54;
+            }
+
+            // Meters: 40m or 40 m
+            const mMatch = dimStr.match(/^(\d+(?:\.\d+)?)\s*m$/i);
+            if (mMatch) {
+                return parseFloat(mMatch[1]) / 0.0254;
+            }
+
+            // Default: treat as inches
+            const num = parseFloat(dimStr);
+            return isNaN(num) ? 0 : num;
+        }
+
+        // Parse a fraction string like "3/4" and return decimal
+        function parseFraction(str) {
+            str = str.trim();
+            const parts = str.split('/');
+            if (parts.length === 2) {
+                return parseFloat(parts[0]) / parseFloat(parts[1]);
+            }
+            return parseFloat(str);
+        }
+
+        // Format inches for display in the selected unit
+        function formatDimension(inches) {
+            const rounded = Math.round(inches * 100) / 100;
+
+            if (displayUnit === 'feet') {
+                const totalInches = Math.round(rounded);
+                const feet = Math.floor(totalInches / 12);
+                const remainingInches = totalInches % 12;
+                if (feet === 0) {
+                    return `${remainingInches}"`;
+                } else if (remainingInches === 0) {
+                    return `${feet}'`;
+                } else {
+                    return `${feet}'${remainingInches}"`;
+                }
+            } else if (displayUnit === 'inches') {
+                return `${rounded}"`;
+            } else if (displayUnit === 'cm') {
+                return `${Math.round(rounded * 2.54 * 100) / 100}cm`;
+            } else if (displayUnit === 'm') {
+                return `${Math.round(rounded * 0.0254 * 100) / 100}m`;
+            }
+            return `${rounded}"`;
+        }
+
+        function parseInput(text) {
+            const lines = text.split('\n');
+            const rooms = {};
+            let currentRoom = null;
+            let currentWall = null;
+
+            for (let line of lines) {
+                if (!line.trim()) continue;
+
+                // Room name (no leading spaces, ends with colon) - now supports quoted names
+                if (line.match(/^([A-Za-z][A-Za-z0-9]*|"[^"]+"):$/)) {
+                    currentRoom = line.replace(':', '').trim();
+                    // Remove quotes if present
+                    if (currentRoom.startsWith('"') && currentRoom.endsWith('"')) {
+                        currentRoom = currentRoom.slice(1, -1);
+                    }
+                    rooms[currentRoom] = { walls: [] };
+                    currentWall = null;
+                }
+                // Wall name (2 spaces, ends with colon)
+                else if (line.match(/^  [A-Za-z][A-Za-z0-9]*:$/)) {
+                    currentWall = { segments: [] };
+                    rooms[currentRoom].walls.push(currentWall);
+                }
+                // Segment (4 spaces, starts with dash)
+                else if (line.match(/^    - /)) {
+                    const segment = line.replace(/^    - /, '').trim();
+                    currentWall.segments.push(segment);
+                }
+            }
+
+            return rooms;
+        }
+
+        function validateFloorplan(rooms) {
+            const errors = [];
+            const warnings = [];
+            const doorSwings = {}; // Track door swings by connection
+            const doorConnections = {}; // Track all door connections
+            const doorSizes = {}; // Track door sizes by connection
+
+            // First pass: collect all doors
+            for (let roomName in rooms) {
+                const room = rooms[roomName];
+                for (let wall of room.walls) {
+                    for (let segmentText of wall.segments) {
+                        const segment = parseSegment(segmentText);
+                        if (segment && segment.type === 'door') {
+                            if (segment.to) {
+                                // Check if room connects to itself
+                                if (segment.to === roomName) {
+                                    errors.push(`Room "${roomName}" has a door connecting to itself. Doors must connect to different rooms.`);
+                                    continue;
+                                }
+
+                                // Create a consistent key for the door connection
+                                const key = [roomName, segment.to].sort().join('|');
+
+                                // Track door connections
+                                if (!doorConnections[key]) {
+                                    doorConnections[key] = [];
+                                }
+                                doorConnections[key].push({ room: roomName, length: segment.length });
+
+                                // Track door sizes
+                                if (!doorSizes[key]) {
+                                    doorSizes[key] = [];
+                                }
+                                doorSizes[key].push({ room: roomName, length: segment.length });
+
+                                // Track door swings
+                                if (segment.swing) {
+                                    if (doorSwings[key]) {
+                                        errors.push(`Door swing specified twice for connection between "${roomName}" and "${segment.to}". Please specify the swing direction only once.`);
+                                    }
+                                    doorSwings[key] = { from: roomName, to: segment.to, swing: segment.swing };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Validate door connections
+            for (let key in doorConnections) {
+                const connections = doorConnections[key];
+                const [room1, room2] = key.split('|');
+
+                // Check if door appears in both rooms
+                if (connections.length === 1) {
+                    errors.push(`Door between "${room1}" and "${room2}" only appears in "${connections[0].room}". It must appear in both rooms using "to:${room2 === connections[0].room ? room1 : room2}".`);
+                } else if (connections.length > 2) {
+                    errors.push(`Door between "${room1}" and "${room2}" appears more than twice. Each connecting door should appear exactly once in each room.`);
+                }
+
+                // Check if door sizes match
+                if (connections.length >= 2) {
+                    const size1 = connections[0].length;
+                    const size2 = connections[1].length;
+                    const tolerance = 0.01; // Allow small floating point differences
+
+                    if (Math.abs(size1 - size2) > tolerance) {
+                        errors.push(`Door between "${room1}" and "${room2}" has mismatched sizes: ${formatDimension(size1)} in "${connections[0].room}" vs ${formatDimension(size2)} in "${connections[1].room}". Door sizes must match.`);
+                    }
+                }
+            }
+
+            // Check if rooms are closed (warning only)
+            for (let roomName in rooms) {
+                const room = rooms[roomName];
+                let x = 0, y = 0;
+                let angle = 0;
+
+                for (let wall of room.walls) {
+                    for (let segmentText of wall.segments) {
+                        const segment = parseSegment(segmentText);
+                        if (!segment) continue;
+
+                        if (segment.type === 'turn') {
+                            angle = (angle + segment.angle) % 360;
+                        } else {
+                            const length = segment.length;
+                            const rad = angle * Math.PI / 180;
+                            const dx = Math.cos(rad) * length;
+                            const dy = Math.sin(rad) * length;
+                            x += dx;
+                            y += dy;
+                        }
+                    }
+                }
+
+                // Check if we're back at origin (with tolerance)
+                const tolerance = 0.1;
+                if (Math.abs(x) > tolerance || Math.abs(y) > tolerance) {
+                    warnings.push(`Room "${roomName}" does not fully close. Final position is offset by ${formatDimension(Math.sqrt(x*x + y*y))}. Check your measurements and turns.`);
+                }
+            }
+
+            return { errors, warnings };
+        }
+
+        function parseSegment(segment) {
+            // turn-right or turn-left
+            if (segment === 'turn-right') {
+                return { type: 'turn', angle: 90 };
+            }
+            if (segment === 'turn-left') {
+                return { type: 'turn', angle: 270 };
+            }
+
+            // Window with any dimension format
+            const windowMatch = segment.match(/^Window (.+)$/);
+            if (windowMatch) {
+                return { type: 'window', length: parseDimension(windowMatch[1]) };
+            }
+
+            // Door with dimension to quoted or unquoted room name, optional swing
+            // Format: Door 20" to:RoomName in:left or Door 20" to:RoomName
+            const doorToMatch = segment.match(/^Door (.+?) to:([^:]+?)(?:\s+(in|out):(left|right))?$/);
+            if (doorToMatch) {
+                let roomName = doorToMatch[2].trim();
+                // Remove quotes if present
+                if (roomName.startsWith('"') && roomName.endsWith('"')) {
+                    roomName = roomName.slice(1, -1);
+                }
+                const result = {
+                    type: 'door',
+                    length: parseDimension(doorToMatch[1]),
+                    to: roomName
+                };
+                if (doorToMatch[3] && doorToMatch[4]) {
+                    result.swing = { direction: doorToMatch[3], hinge: doorToMatch[4] };
+                }
+                return result;
+            }
+
+            // Door with any dimension format and optional swing
+            // Format: Door 20" in:left or Door 20"
+            const doorMatch = segment.match(/^Door (.+?)(?:\s+(in|out):(left|right))?$/);
+            if (doorMatch) {
+                const result = { type: 'door', length: parseDimension(doorMatch[1]) };
+                if (doorMatch[2] && doorMatch[3]) {
+                    result.swing = { direction: doorMatch[2], hinge: doorMatch[3] };
+                }
+                return result;
+            }
+
+            // Just a dimension (any format)
+            return { type: 'wall', length: parseDimension(segment) };
+        }
+
+        function calculateRoomGeometry(room, startX, startY, startAngle) {
+            const walls = [];
+            let x = startX;
+            let y = startY;
+            let angle = startAngle; // 0 = right, 90 = down, 180 = left, 270 = up
+
+            const doors = [];
+            const windows = [];
+
+            for (let wall of room.walls) {
+                const wallSegments = [];
+
+                for (let segmentText of wall.segments) {
+                    const segment = parseSegment(segmentText);
+                    if (!segment) continue;
+
+                    if (segment.type === 'turn') {
+                        angle = (angle + segment.angle) % 360;
+                    } else {
+                        const length = segment.length;
+                        const rad = angle * Math.PI / 180;
+                        const dx = Math.cos(rad) * length;
+                        const dy = Math.sin(rad) * length;
+                        const endX = x + dx;
+                        const endY = y + dy;
+
+                        wallSegments.push({
+                            type: segment.type,
+                            x1: x,
+                            y1: y,
+                            x2: endX,
+                            y2: endY,
+                            angle: angle,
+                            to: segment.to,
+                            swing: segment.swing
+                        });
+
+                        if (segment.type === 'door') {
+                            doors.push({
+                                x1: x,
+                                y1: y,
+                                x2: endX,
+                                y2: endY,
+                                angle: angle,
+                                to: segment.to,
+                                swing: segment.swing
+                            });
+                        } else if (segment.type === 'window') {
+                            windows.push({
+                                x1: x,
+                                y1: y,
+                                x2: endX,
+                                y2: endY
+                            });
+                        }
+
+                        x = endX;
+                        y = endY;
+                    }
+                }
+
+                if (wallSegments.length > 0) {
+                    walls.push(wallSegments);
+                }
+            }
+
+            return { walls, doors, windows };
+        }
+
+        function findDoorConnection(fromRoom, fromRoomName, toRoomName) {
+            for (let door of fromRoom.doors) {
+                if (door.to === toRoomName) {
+                    return door;
+                }
+            }
+            return null;
+        }
+
+        function rotatePoint(x, y, angleDeg, centerX = 0, centerY = 0) {
+            const angleRad = angleDeg * Math.PI / 180;
+            const cos = Math.cos(angleRad);
+            const sin = Math.sin(angleRad);
+
+            const dx = x - centerX;
+            const dy = y - centerY;
+
+            return {
+                x: centerX + dx * cos - dy * sin,
+                y: centerY + dx * sin + dy * cos
+            };
+        }
+
+        function rotateGeometry(geometry, angleDeg) {
+            const rotated = { walls: [], doors: [], windows: [] };
+
+            // Rotate walls
+            for (let wall of geometry.walls) {
+                const rotatedWall = [];
+                for (let segment of wall) {
+                    const p1 = rotatePoint(segment.x1, segment.y1, angleDeg);
+                    const p2 = rotatePoint(segment.x2, segment.y2, angleDeg);
+                    rotatedWall.push({
+                        ...segment,
+                        x1: p1.x,
+                        y1: p1.y,
+                        x2: p2.x,
+                        y2: p2.y,
+                        angle: (segment.angle + angleDeg + 360) % 360
+                    });
+                }
+                rotated.walls.push(rotatedWall);
+            }
+
+            // Rotate doors
+            for (let door of geometry.doors) {
+                const p1 = rotatePoint(door.x1, door.y1, angleDeg);
+                const p2 = rotatePoint(door.x2, door.y2, angleDeg);
+                rotated.doors.push({
+                    ...door,
+                    x1: p1.x,
+                    y1: p1.y,
+                    x2: p2.x,
+                    y2: p2.y,
+                    angle: (door.angle + angleDeg + 360) % 360
+                });
+            }
+
+            // Rotate windows
+            for (let window of geometry.windows) {
+                const p1 = rotatePoint(window.x1, window.y1, angleDeg);
+                const p2 = rotatePoint(window.x2, window.y2, angleDeg);
+                rotated.windows.push({
+                    ...window,
+                    x1: p1.x,
+                    y1: p1.y,
+                    x2: p2.x,
+                    y2: p2.y
+                });
+            }
+
+            return rotated;
+        }
+
+        function translateGeometry(geometry, offsetX, offsetY) {
+            const translated = { walls: [], doors: [], windows: [] };
+
+            // Translate walls
+            for (let wall of geometry.walls) {
+                const translatedWall = [];
+                for (let segment of wall) {
+                    translatedWall.push({
+                        ...segment,
+                        x1: segment.x1 + offsetX,
+                        y1: segment.y1 + offsetY,
+                        x2: segment.x2 + offsetX,
+                        y2: segment.y2 + offsetY
+                    });
+                }
+                translated.walls.push(translatedWall);
+            }
+
+            // Translate doors
+            for (let door of geometry.doors) {
+                translated.doors.push({
+                    ...door,
+                    x1: door.x1 + offsetX,
+                    y1: door.y1 + offsetY,
+                    x2: door.x2 + offsetX,
+                    y2: door.y2 + offsetY
+                });
+            }
+
+            // Translate windows
+            for (let window of geometry.windows) {
+                translated.windows.push({
+                    ...window,
+                    x1: window.x1 + offsetX,
+                    y1: window.y1 + offsetY,
+                    x2: window.x2 + offsetX,
+                    y2: window.y2 + offsetY
+                });
+            }
+
+            return translated;
+        }
+
+        function calculateRoomPosition(door1, door2) {
+            // door1 is in the first room (already positioned), door2 is in the second room
+            // We need to rotate and position the second room so that door2 aligns with door1
+
+            // The doors should be at the same position but facing opposite directions
+            // door1 is at angle α, door2 should be at angle α + 180°
+
+            // Calculate rotation needed
+            const targetAngle = (door1.angle + 180) % 360;
+            const rotationNeeded = (targetAngle - door2.angle + 360) % 360;
+
+            return { rotation: rotationNeeded };
+        }
+
+        function layoutRooms(rooms) {
+            const roomGeometries = {};
+            const positioned = new Set();
+
+            // Start with the first room at origin
+            const firstRoomName = Object.keys(rooms)[0];
+            roomGeometries[firstRoomName] = calculateRoomGeometry(rooms[firstRoomName], 0, 0, 0);
+            positioned.add(firstRoomName);
+
+            // Queue of rooms to process
+            const queue = [firstRoomName];
+
+            while (queue.length > 0) {
+                const currentRoomName = queue.shift();
+                const currentGeometry = roomGeometries[currentRoomName];
+
+                // Find all doors in this room that connect to other rooms
+                for (let door of currentGeometry.doors) {
+                    if (door.to && !positioned.has(door.to)) {
+                        // Calculate geometry for the connected room at origin first
+                        let connectedGeometry = calculateRoomGeometry(rooms[door.to], 0, 0, 0);
+
+                        // Find the matching door in the connected room
+                        const matchingDoor = findDoorConnection(connectedGeometry, door.to, currentRoomName);
+
+                        if (matchingDoor) {
+                            // Calculate the rotation needed
+                            const { rotation } = calculateRoomPosition(door, matchingDoor);
+
+                            // Rotate the connected room
+                            connectedGeometry = rotateGeometry(connectedGeometry, rotation);
+
+                            // Find the door again after rotation
+                            const rotatedMatchingDoor = findDoorConnection(connectedGeometry, door.to, currentRoomName);
+
+                            // Calculate translation to align door positions
+                            const mid1X = (door.x1 + door.x2) / 2;
+                            const mid1Y = (door.y1 + door.y2) / 2;
+                            const mid2X = (rotatedMatchingDoor.x1 + rotatedMatchingDoor.x2) / 2;
+                            const mid2Y = (rotatedMatchingDoor.y1 + rotatedMatchingDoor.y2) / 2;
+                            const offsetX = mid1X - mid2X;
+                            const offsetY = mid1Y - mid2Y;
+
+                            // Translate the connected room
+                            connectedGeometry = translateGeometry(connectedGeometry, offsetX, offsetY);
+
+                            roomGeometries[door.to] = connectedGeometry;
+                            positioned.add(door.to);
+                            queue.push(door.to);
+                        }
+                    }
+                }
+            }
+
+            return roomGeometries;
+        }
+
+        function countOverlaps(dim, allDimensions) {
+            let overlapCount = 0;
+            const labelPadding = 30; // Approximate dimension label size in pixels
+
+            for (let other of allDimensions) {
+                if (other === dim) continue;
+
+                // Check if dimension labels might overlap
+                const distX = Math.abs(dim.midX - other.midX);
+                const distY = Math.abs(dim.midY - other.midY);
+                const dist = Math.sqrt(distX * distX + distY * distY);
+
+                if (dist < labelPadding) {
+                    overlapCount++;
+                }
+            }
+
+            return overlapCount;
+        }
+
+        function isHorizontal(angle) {
+            // Normalize angle to 0-360
+            const normalized = ((angle % 360) + 360) % 360;
+            // Horizontal: 0° (±15°) or 180° (±15°)
+            return (normalized < 15 || normalized > 345) || (normalized > 165 && normalized < 195);
+        }
+
+        function isVertical(angle) {
+            // Normalize angle to 0-360
+            const normalized = ((angle % 360) + 360) % 360;
+            // Vertical: 90° (±15°) or 270° (±15°)
+            return (normalized > 75 && normalized < 105) || (normalized > 255 && normalized < 285);
+        }
+
+        function getAxisRange(dim) {
+            // Returns the range [min, max] on the primary axis
+            if (isHorizontal(dim.angle)) {
+                // For horizontal walls, return X range
+                return {
+                    min: Math.min(dim.segX1, dim.segX2),
+                    max: Math.max(dim.segX1, dim.segX2),
+                    axis: 'horizontal'
+                };
+            } else {
+                // For vertical walls, return Y range
+                return {
+                    min: Math.min(dim.segY1, dim.segY2),
+                    max: Math.max(dim.segY1, dim.segY2),
+                    axis: 'vertical'
+                };
+            }
+        }
+
+        function rangesOverlap(range1, range2, minOverlapPercent = 0.8) {
+            // Check if two ranges overlap significantly
+            const overlap = Math.min(range1.max, range2.max) - Math.max(range1.min, range2.min);
+            const len1 = range1.max - range1.min;
+            const len2 = range2.max - range2.min;
+            const minLen = Math.min(len1, len2);
+
+            return overlap > 0 && (overlap / minLen) >= minOverlapPercent;
+        }
+
+        function hasWallBetween(dim1, dim2, allDimensions) {
+            // Check if there's any wall segment between dim1 and dim2
+            const range1 = getAxisRange(dim1);
+            const range2 = getAxisRange(dim2);
+
+            if (range1.axis !== range2.axis) return true; // Different orientations
+
+            // Get the perpendicular positions
+            let perp1, perp2;
+            if (range1.axis === 'horizontal') {
+                // For horizontal walls, perpendicular is Y
+                perp1 = (dim1.segY1 + dim1.segY2) / 2;
+                perp2 = (dim2.segY1 + dim2.segY2) / 2;
+            } else {
+                // For vertical walls, perpendicular is X
+                perp1 = (dim1.segX1 + dim1.segX2) / 2;
+                perp2 = (dim2.segX1 + dim2.segX2) / 2;
+            }
+
+            const minPerp = Math.min(perp1, perp2);
+            const maxPerp = Math.max(perp1, perp2);
+
+            // Check all other dimensions in the same room
+            for (let other of allDimensions) {
+                if (other === dim1 || other === dim2) continue;
+                if (other.roomName !== dim1.roomName) continue;
+
+                const otherRange = getAxisRange(other);
+
+                // Check if this wall crosses between dim1 and dim2
+                if (range1.axis === 'horizontal') {
+                    // Check if other wall's Y position is between dim1 and dim2
+                    const otherPerpStart = other.segY1;
+                    const otherPerpEnd = other.segY2;
+                    const otherMinPerp = Math.min(otherPerpStart, otherPerpEnd);
+                    const otherMaxPerp = Math.max(otherPerpStart, otherPerpEnd);
+
+                    // If the other wall crosses the space between dim1 and dim2
+                    if (otherMinPerp < maxPerp && otherMaxPerp > minPerp) {
+                        // And it overlaps with our horizontal range
+                        if (rangesOverlap(range1, otherRange, 0.1)) {
+                            return true; // There's a wall in between
+                        }
+                    }
+                } else {
+                    // For vertical walls, check X positions
+                    const otherPerpStart = other.segX1;
+                    const otherPerpEnd = other.segX2;
+                    const otherMinPerp = Math.min(otherPerpStart, otherPerpEnd);
+                    const otherMaxPerp = Math.max(otherPerpStart, otherPerpEnd);
+
+                    if (otherMinPerp < maxPerp && otherMaxPerp > minPerp) {
+                        if (rangesOverlap(range1, otherRange, 0.1)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false; // No wall in between
+        }
+
+        function shouldHideDimension(dimensions, currentDim) {
+            const tolerance = 2.5; // inches tolerance for considering segments as overlapping (5px / SCALE)
+
+            for (let dim of dimensions) {
+                if (dim === currentDim) continue;
+
+                // Check if dimensions have similar length
+                const lengthMatch = Math.abs(dim.length - currentDim.length) < 0.1;
+                if (!lengthMatch) continue;
+
+                // RULE 1: Check for shared walls between different rooms
+                // Only hide if it's the EXACT SAME WALL (shared wall between rooms)
+                if (dim.roomName !== currentDim.roomName) {
+                    // Check if wall segments are at the same physical location
+                    const seg1Start = { x: dim.segX1, y: dim.segY1 };
+                    const seg1End = { x: dim.segX2, y: dim.segY2 };
+                    const seg2Start = { x: currentDim.segX1, y: currentDim.segY1 };
+                    const seg2End = { x: currentDim.segX2, y: currentDim.segY2 };
+
+                    // Check if segments are the same (allowing for reversed direction)
+                    const sameDirection =
+                        Math.abs(seg1Start.x - seg2Start.x) < tolerance &&
+                        Math.abs(seg1Start.y - seg2Start.y) < tolerance &&
+                        Math.abs(seg1End.x - seg2End.x) < tolerance &&
+                        Math.abs(seg1End.y - seg2End.y) < tolerance;
+
+                    const reversedDirection =
+                        Math.abs(seg1Start.x - seg2End.x) < tolerance &&
+                        Math.abs(seg1Start.y - seg2End.y) < tolerance &&
+                        Math.abs(seg1End.x - seg2Start.x) < tolerance &&
+                        Math.abs(seg1End.y - seg2Start.y) < tolerance;
+
+                    if (sameDirection || reversedDirection) {
+                        // This is a shared wall between rooms
+                        // Prioritize the one with fewer overlaps
+                        const dimOverlaps = countOverlaps(dim, dimensions);
+                        const currentOverlaps = countOverlaps(currentDim, dimensions);
+
+                        if (dimOverlaps < currentOverlaps) {
+                            return true; // Hide current (has more overlaps)
+                        } else if (dimOverlaps > currentOverlaps) {
+                            return false; // Keep current (has fewer overlaps)
+                        } else {
+                            // Equal overlaps, keep first one
+                            return dim.id < currentDim.id;
+                        }
+                    }
+                }
+
+                // RULE 2: Check for direct opposite walls in same room
+                // Criteria for opposing walls:
+                // 1. Same room
+                // 2. Same orientation (both horizontal or both vertical)
+                // 3. Same coordinates on their axis (overlapping span)
+                // 4. Nothing in between them
+                if (dim.roomName === currentDim.roomName && dim.type === currentDim.type) {
+                    const range1 = getAxisRange(dim);
+                    const range2 = getAxisRange(currentDim);
+
+                    // Must have same orientation
+                    if (range1.axis !== range2.axis) continue;
+
+                    // Must span the same range on their axis (at least 80% overlap)
+                    if (!rangesOverlap(range1, range2, 0.8)) continue;
+
+                    // Check perpendicular distance - must be significantly apart
+                    let perpDist;
+                    if (range1.axis === 'horizontal') {
+                        const perp1 = (dim.segY1 + dim.segY2) / 2;
+                        const perp2 = (currentDim.segY1 + currentDim.segY2) / 2;
+                        perpDist = Math.abs(perp2 - perp1);
+                    } else {
+                        const perp1 = (dim.segX1 + dim.segX2) / 2;
+                        const perp2 = (currentDim.segX1 + currentDim.segX2) / 2;
+                        perpDist = Math.abs(perp2 - perp1);
+                    }
+
+                    // Must be at least 50 inches apart
+                    if (perpDist < 50) continue;
+
+                    // Check if there's nothing in between
+                    if (hasWallBetween(dim, currentDim, dimensions)) continue;
+
+                    // These are opposing walls! Prioritize based on overlaps
+                    const dimOverlaps = countOverlaps(dim, dimensions);
+                    const currentOverlaps = countOverlaps(currentDim, dimensions);
+
+                    if (dimOverlaps < currentOverlaps) {
+                        return true; // Hide current (has more overlaps)
+                    } else if (dimOverlaps > currentOverlaps) {
+                        return false; // Keep current (has fewer overlaps)
+                    } else {
+                        // Equal overlaps, keep first one
+                        return dim.id < currentDim.id;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        function generateSVG(roomGeometries) {
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+            // Find bounds
+            for (let roomName in roomGeometries) {
+                const room = roomGeometries[roomName];
+                for (let wall of room.walls) {
+                    for (let segment of wall) {
+                        minX = Math.min(minX, segment.x1, segment.x2);
+                        minY = Math.min(minY, segment.y1, segment.y2);
+                        maxX = Math.max(maxX, segment.x1, segment.x2);
+                        maxY = Math.max(maxY, segment.y1, segment.y2);
+                    }
+                }
+            }
+
+            const padding = 100;
+            const width = (maxX - minX) * SCALE + padding * 2;
+            const height = (maxY - minY) * SCALE + padding * 2;
+
+            let svg = `<svg viewBox="0 0 ${width} ${height}" data-width="${width}" data-height="${height}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">`;
+            svg += `<defs>
+                <marker id="arrowStart" markerWidth="10" markerHeight="10" refX="5" refY="3" orient="auto" markerUnits="strokeWidth">
+                    <path d="M5,0 L5,6 L0,3 z" fill="#666" />
+                </marker>
+                <marker id="arrowEnd" markerWidth="10" markerHeight="10" refX="5" refY="3" orient="auto" markerUnits="strokeWidth">
+                    <path d="M0,0 L0,6 L5,3 z" fill="#666" />
+                </marker>
+            </defs>`;
+            svg += `<rect width="${width}" height="${height}" fill="#fafafa"/>`;
+
+            // Function to transform coordinates
+            const tx = (x) => (x - minX) * SCALE + padding;
+            const ty = (y) => (y - minY) * SCALE + padding;
+
+            // Collect all dimensions first for deduplication
+            const allDimensions = [];
+            let dimId = 0;
+
+            // First pass: collect dimensions
+            for (let roomName in roomGeometries) {
+                const room = roomGeometries[roomName];
+                for (let wall of room.walls) {
+                    let wallTotalLength = 0;
+                    let wallStartX = null, wallStartY = null, wallEndX = null, wallEndY = null;
+
+                    const segmentCount = wall.filter(seg => seg.x1 !== undefined).length;
+                    const showSegmentDimensions = segmentCount > 1;
+
+                    for (let segment of wall) {
+                        const mx1 = tx(segment.x1);
+                        const my1 = ty(segment.y1);
+                        const mx2 = tx(segment.x2);
+                        const my2 = ty(segment.y2);
+
+                        if (wallStartX === null) {
+                            wallStartX = mx1;
+                            wallStartY = my1;
+                        }
+                        wallEndX = mx2;
+                        wallEndY = my2;
+
+                        const segmentLength = Math.sqrt((segment.x2 - segment.x1) ** 2 + (segment.y2 - segment.y1) ** 2);
+                        wallTotalLength += segmentLength;
+
+                        if (showSegmentDimensions) {
+                            const midX = (mx1 + mx2) / 2;
+                            const midY = (my1 + my2) / 2;
+                            const angle = Math.atan2(my2 - my1, mx2 - mx1);
+
+                            allDimensions.push({
+                                id: dimId++,
+                                type: 'segment',
+                                roomName: roomName,
+                                length: segmentLength,
+                                midX: midX,
+                                midY: midY,
+                                angle: angle * 180 / Math.PI,
+                                segX1: segment.x1,
+                                segY1: segment.y1,
+                                segX2: segment.x2,
+                                segY2: segment.y2
+                            });
+                        }
+                    }
+
+                    if (wallTotalLength > 0) {
+                        const wallMidX = (wallStartX + wallEndX) / 2;
+                        const wallMidY = (wallStartY + wallEndY) / 2;
+                        const angle = Math.atan2(wallEndY - wallStartY, wallEndX - wallStartX);
+
+                        // Get the wall start and end in original coordinates (not SVG transformed)
+                        const firstSegment = wall[0];
+                        const lastSegment = wall[wall.length - 1];
+
+                        allDimensions.push({
+                            id: dimId++,
+                            type: 'wall',
+                            roomName: roomName,
+                            length: wallTotalLength,
+                            midX: wallMidX,
+                            midY: wallMidY,
+                            angle: angle * 180 / Math.PI,
+                            segX1: firstSegment.x1,
+                            segY1: firstSegment.y1,
+                            segX2: lastSegment.x2,
+                            segY2: lastSegment.y2
+                        });
+                    }
+                }
+            }
+
+            // Filter dimensions to remove duplicates
+            const dimensionsToShow = allDimensions.filter(dim => !shouldHideDimension(allDimensions, dim));
+            const showDimensionMap = new Set(dimensionsToShow.map(d => d.id));
+
+            // Reset dimId for second pass
+            dimId = 0;
+
+            // Draw each room
+            for (let roomName in roomGeometries) {
+                const room = roomGeometries[roomName];
+
+                // Draw room label first (background layer) - calculate polygon centroid
+                // Collect all vertices of the room polygon
+                const vertices = [];
+                for (let wall of room.walls) {
+                    for (let segment of wall) {
+                        // Add start vertex if it's the first or different from the last
+                        if (vertices.length === 0 ||
+                            vertices[vertices.length - 1].x !== segment.x1 ||
+                            vertices[vertices.length - 1].y !== segment.y1) {
+                            vertices.push({ x: segment.x1, y: segment.y1 });
+                        }
+                    }
+                }
+
+                // Calculate polygon centroid using proper formula
+                let centroidX = 0, centroidY = 0;
+                let signedArea = 0;
+
+                for (let i = 0; i < vertices.length; i++) {
+                    const j = (i + 1) % vertices.length;
+                    const xi = vertices[i].x;
+                    const yi = vertices[i].y;
+                    const xj = vertices[j].x;
+                    const yj = vertices[j].y;
+
+                    const cross = xi * yj - xj * yi;
+                    signedArea += cross;
+                    centroidX += (xi + xj) * cross;
+                    centroidY += (yi + yj) * cross;
+                }
+
+                signedArea *= 0.5;
+                centroidX /= (6.0 * signedArea);
+                centroidY /= (6.0 * signedArea);
+
+                // Transform to SVG coordinates
+                const labelX = tx(centroidX);
+                const labelY = ty(centroidY);
+
+                svg += `<text x="${labelX}" y="${labelY}" `;
+                svg += `font-family="Arial" font-size="18" font-weight="bold" fill="#ccc" text-anchor="middle">${roomName}</text>`;
+
+                // Draw walls with dimensions
+                for (let wall of room.walls) {
+                    let wallTotalLength = 0;
+                    let wallStartX = null, wallStartY = null, wallEndX = null, wallEndY = null;
+                    let wallAngle = null;
+
+                    // Count segments with length (not just turns)
+                    const segmentCount = wall.filter(seg => seg.x1 !== undefined).length;
+                    const showSegmentDimensions = segmentCount > 1;
+
+                    for (let segment of wall) {
+                        const mx1 = tx(segment.x1);
+                        const my1 = ty(segment.y1);
+                        const mx2 = tx(segment.x2);
+                        const my2 = ty(segment.y2);
+
+                        if (wallStartX === null) {
+                            wallStartX = mx1;
+                            wallStartY = my1;
+                            wallAngle = segment.angle;
+                        }
+                        wallEndX = mx2;
+                        wallEndY = my2;
+
+                        // Draw wall segments
+                        if (segment.type === 'wall') {
+                            svg += `<line x1="${mx1}" y1="${my1}" x2="${mx2}" y2="${my2}" `;
+                            svg += `stroke="#000" stroke-width="4"/>`;
+                        } else if (segment.type === 'window') {
+                            // Window: 3 thin parallel lines spanning the wall width
+                            const dx = mx2 - mx1;
+                            const dy = my2 - my1;
+                            const len = Math.sqrt(dx * dx + dy * dy);
+                            const ux = dx / len;
+                            const uy = dy / len;
+
+                            // Perpendicular direction (wall width is 4px, so offset ±2px)
+                            const perpX = -uy * 2;
+                            const perpY = ux * 2;
+
+                            // Three parallel lines
+                            svg += `<line x1="${mx1 - perpX}" y1="${my1 - perpY}" x2="${mx2 - perpX}" y2="${my2 - perpY}" stroke="#000" stroke-width="1"/>`;
+                            svg += `<line x1="${mx1}" y1="${my1}" x2="${mx2}" y2="${my2}" stroke="#000" stroke-width="1"/>`;
+                            svg += `<line x1="${mx1 + perpX}" y1="${my1 + perpY}" x2="${mx2 + perpX}" y2="${my2 + perpY}" stroke="#000" stroke-width="1"/>`;
+                        } else if (segment.type === 'door') {
+                            // Door: gap with optional swing arc
+                            if (segment.swing) {
+                                const dx = mx2 - mx1;
+                                const dy = my2 - my1;
+                                const doorLen = Math.sqrt(dx * dx + dy * dy);
+
+                                // Determine hinge point (swapped: right = start, left = end)
+                                let hingeX, hingeY, endX, endY;
+                                if (segment.swing.hinge === 'left') {
+                                    hingeX = mx2;
+                                    hingeY = my2;
+                                    endX = mx1;
+                                    endY = my1;
+                                } else { // right
+                                    hingeX = mx1;
+                                    hingeY = my1;
+                                    endX = mx2;
+                                    endY = my2;
+                                }
+
+                                // Calculate swing direction (perpendicular to door) - swapped in/out
+                                const doorAngle = segment.angle * Math.PI / 180;
+                                let perpAngle;
+                                if (segment.swing.direction === 'in') {
+                                    // Swing inward (into the room) - rotate +90 degrees (to the right)
+                                    perpAngle = doorAngle + Math.PI / 2;
+                                } else { // out
+                                    // Swing outward - rotate -90 degrees (to the left)
+                                    perpAngle = doorAngle - Math.PI / 2;
+                                }
+
+                                // Calculate the point where the door swings to (90 degree arc)
+                                const swingEndX = hingeX + Math.cos(perpAngle) * doorLen;
+                                const swingEndY = hingeY + Math.sin(perpAngle) * doorLen;
+
+                                // Draw door swing arc (quarter circle from door end to swing position) - solid line
+                                // Sweep flag needs to be flipped for left hinge
+                                let sweepFlag;
+                                if (segment.swing.hinge === 'left') {
+                                    sweepFlag = segment.swing.direction === 'in' ? 0 : 1; // Flipped for left
+                                } else {
+                                    sweepFlag = segment.swing.direction === 'in' ? 1 : 0; // Normal for right
+                                }
+                                svg += `<path d="M ${endX},${endY} A ${doorLen},${doorLen} 0 0,${sweepFlag} ${swingEndX},${swingEndY}" `;
+                                svg += `stroke="#666" stroke-width="1" fill="none"/>`;
+
+                                // Draw door panel line (connecting arc end to hinge, showing open position)
+                                svg += `<line x1="${hingeX}" y1="${hingeY}" x2="${swingEndX}" y2="${swingEndY}" `;
+                                svg += `stroke="#000" stroke-width="2"/>`;
+                            }
+                        }
+
+                        // Draw segment dimension only if wall has multiple segments
+                        const segmentLength = Math.sqrt((segment.x2 - segment.x1) ** 2 + (segment.y2 - segment.y1) ** 2);
+                        wallTotalLength += segmentLength;
+
+                        if (showSegmentDimensions && showDimensionMap.has(dimId)) {
+                            const midX = (mx1 + mx2) / 2;
+                            const midY = (my1 + my2) / 2;
+
+                            // Offset dimension line perpendicular to segment
+                            const angle = Math.atan2(my2 - my1, mx2 - mx1);
+                            const perpAngle = angle + Math.PI / 2;
+                            const dimOffset = 20;
+                            const dimX = midX + Math.cos(perpAngle) * dimOffset;
+                            const dimY = midY + Math.sin(perpAngle) * dimOffset;
+
+                            // Dimension text
+                            const textAngle = angle * 180 / Math.PI;
+                            const displayAngle = textAngle > 90 || textAngle < -90 ? textAngle + 180 : textAngle;
+
+                            // Format dimension in selected unit
+                            const displayLength = formatDimension(segmentLength);
+
+                            svg += `<text x="${dimX}" y="${dimY}" `;
+                            svg += `font-family="Arial" font-size="11" fill="#333" text-anchor="middle" `;
+                            svg += `transform="rotate(${displayAngle}, ${dimX}, ${dimY})">${displayLength}</text>`;
+                        }
+                        if (showSegmentDimensions) dimId++;
+                    }
+
+                    // Draw total wall dimension
+                    if (wallTotalLength > 0 && showDimensionMap.has(dimId)) {
+                        const wallMidX = (wallStartX + wallEndX) / 2;
+                        const wallMidY = (wallStartY + wallEndY) / 2;
+
+                        const angle = Math.atan2(wallEndY - wallStartY, wallEndX - wallStartX);
+                        const perpAngle = angle + Math.PI / 2;
+                        // If segment dimensions are shown, offset further; otherwise use segment dimension position
+                        const totalDimOffset = showSegmentDimensions ? 40 : 20;
+                        const totalDimX = wallMidX + Math.cos(perpAngle) * totalDimOffset;
+                        const totalDimY = wallMidY + Math.sin(perpAngle) * totalDimOffset;
+
+                        // Only show dimension lines and arrows if there are multiple segments
+                        if (showSegmentDimensions) {
+                            // Dimension line
+                            const dimStartX = wallStartX + Math.cos(perpAngle) * totalDimOffset;
+                            const dimStartY = wallStartY + Math.sin(perpAngle) * totalDimOffset;
+                            const dimEndX = wallEndX + Math.cos(perpAngle) * totalDimOffset;
+                            const dimEndY = wallEndY + Math.sin(perpAngle) * totalDimOffset;
+
+                            svg += `<line x1="${dimStartX}" y1="${dimStartY}" x2="${dimEndX}" y2="${dimEndY}" `;
+                            svg += `stroke="#666" stroke-width="1" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>`;
+
+                            // Extension lines - start slightly away from wall (8px = wall width/2 + margin)
+                            const extOffset = 8;
+                            const extStartX = wallStartX + Math.cos(perpAngle) * extOffset;
+                            const extStartY = wallStartY + Math.sin(perpAngle) * extOffset;
+                            const extEndX = wallEndX + Math.cos(perpAngle) * extOffset;
+                            const extEndY = wallEndY + Math.sin(perpAngle) * extOffset;
+
+                            svg += `<line x1="${extStartX}" y1="${extStartY}" x2="${dimStartX}" y2="${dimStartY}" `;
+                            svg += `stroke="#666" stroke-width="1" stroke-dasharray="2,2"/>`;
+                            svg += `<line x1="${extEndX}" y1="${extEndY}" x2="${dimEndX}" y2="${dimEndY}" `;
+                            svg += `stroke="#666" stroke-width="1" stroke-dasharray="2,2"/>`;
+                        }
+
+                        // Total dimension text
+                        const textAngle = angle * 180 / Math.PI;
+                        const displayAngle = textAngle > 90 || textAngle < -90 ? textAngle + 180 : textAngle;
+
+                        // Format dimension in selected unit
+                        const displayTotalLength = formatDimension(wallTotalLength);
+
+                        svg += `<text x="${totalDimX}" y="${totalDimY}" `;
+                        svg += `font-family="Arial" font-size="12" font-weight="bold" fill="#000" text-anchor="middle" `;
+                        svg += `transform="rotate(${displayAngle}, ${totalDimX}, ${totalDimY})">${displayTotalLength}</text>`;
+                    }
+                    if (wallTotalLength > 0) dimId++;
+                }
+            }
+
+            // Draw exterior dimensions
+            const exteriorOffset = 70;
+            const totalWidth = maxX - minX;
+            const totalHeight = maxY - minY;
+
+            // Format dimensions in selected unit
+            const displayWidth = formatDimension(totalWidth);
+            const displayHeight = formatDimension(totalHeight);
+
+            // Top horizontal dimension
+            const topY = ty(minY) - exteriorOffset;
+            const leftX = tx(minX);
+            const rightX = tx(maxX);
+            const topMidX = (leftX + rightX) / 2;
+
+            svg += `<line x1="${leftX}" y1="${topY}" x2="${rightX}" y2="${topY}" `;
+            svg += `stroke="#333" stroke-width="1.5" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>`;
+
+            // Extension lines for top dimension
+            svg += `<line x1="${leftX}" y1="${ty(minY) - 10}" x2="${leftX}" y2="${topY}" `;
+            svg += `stroke="#333" stroke-width="1" stroke-dasharray="2,2"/>`;
+            svg += `<line x1="${rightX}" y1="${ty(minY) - 10}" x2="${rightX}" y2="${topY}" `;
+            svg += `stroke="#333" stroke-width="1" stroke-dasharray="2,2"/>`;
+
+            svg += `<text x="${topMidX}" y="${topY - 5}" `;
+            svg += `font-family="Arial" font-size="14" font-weight="bold" fill="#000" text-anchor="middle">${displayWidth}</text>`;
+
+            // Bottom horizontal dimension
+            const bottomY = ty(maxY) + exteriorOffset;
+
+            svg += `<line x1="${leftX}" y1="${bottomY}" x2="${rightX}" y2="${bottomY}" `;
+            svg += `stroke="#333" stroke-width="1.5" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>`;
+
+            // Extension lines for bottom dimension
+            svg += `<line x1="${leftX}" y1="${ty(maxY) + 10}" x2="${leftX}" y2="${bottomY}" `;
+            svg += `stroke="#333" stroke-width="1" stroke-dasharray="2,2"/>`;
+            svg += `<line x1="${rightX}" y1="${ty(maxY) + 10}" x2="${rightX}" y2="${bottomY}" `;
+            svg += `stroke="#333" stroke-width="1" stroke-dasharray="2,2"/>`;
+
+            svg += `<text x="${topMidX}" y="${bottomY + 18}" `;
+            svg += `font-family="Arial" font-size="14" font-weight="bold" fill="#000" text-anchor="middle">${displayWidth}</text>`;
+
+            // Left vertical dimension
+            const leftXDim = tx(minX) - exteriorOffset;
+            const topY2 = ty(minY);
+            const bottomY2 = ty(maxY);
+            const leftMidY = (topY2 + bottomY2) / 2;
+
+            svg += `<line x1="${leftXDim}" y1="${topY2}" x2="${leftXDim}" y2="${bottomY2}" `;
+            svg += `stroke="#333" stroke-width="1.5" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>`;
+
+            // Extension lines for left dimension
+            svg += `<line x1="${tx(minX) - 10}" y1="${topY2}" x2="${leftXDim}" y2="${topY2}" `;
+            svg += `stroke="#333" stroke-width="1" stroke-dasharray="2,2"/>`;
+            svg += `<line x1="${tx(minX) - 10}" y1="${bottomY2}" x2="${leftXDim}" y2="${bottomY2}" `;
+            svg += `stroke="#333" stroke-width="1" stroke-dasharray="2,2"/>`;
+
+            svg += `<text x="${leftXDim - 5}" y="${leftMidY}" `;
+            svg += `font-family="Arial" font-size="14" font-weight="bold" fill="#000" text-anchor="middle" `;
+            svg += `transform="rotate(-90, ${leftXDim - 5}, ${leftMidY})">${displayHeight}</text>`;
+
+            // Right vertical dimension
+            const rightXDim = tx(maxX) + exteriorOffset;
+
+            svg += `<line x1="${rightXDim}" y1="${topY2}" x2="${rightXDim}" y2="${bottomY2}" `;
+            svg += `stroke="#333" stroke-width="1.5" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>`;
+
+            // Extension lines for right dimension
+            svg += `<line x1="${tx(maxX) + 10}" y1="${topY2}" x2="${rightXDim}" y2="${topY2}" `;
+            svg += `stroke="#333" stroke-width="1" stroke-dasharray="2,2"/>`;
+            svg += `<line x1="${tx(maxX) + 10}" y1="${bottomY2}" x2="${rightXDim}" y2="${bottomY2}" `;
+            svg += `stroke="#333" stroke-width="1" stroke-dasharray="2,2"/>`;
+
+            svg += `<text x="${rightXDim + 5}" y="${leftMidY}" `;
+            svg += `font-family="Arial" font-size="14" font-weight="bold" fill="#000" text-anchor="middle" `;
+            svg += `transform="rotate(90, ${rightXDim + 5}, ${leftMidY})">${displayHeight}</text>`;
+
+            svg += '</svg>';
+            return svg;
+        }
+
+        // Pan and zoom state
+        let viewBox = { x: 0, y: 0, width: 800, height: 600 };
+        let isPanning = false;
+        let startPoint = { x: 0, y: 0 };
+        let zoomLevel = 1.0;
+
+        function changeDisplayUnit() {
+            const selector = document.getElementById('unitSelector');
+            displayUnit = selector.value;
+            generateFloorplan();
+        }
+
+        function generateFloorplan() {
+            const input = document.getElementById('planInput').value;
+            const errorMsg = document.getElementById('errorMsg');
+
+            try {
+                errorMsg.style.display = 'none';
+
+                const rooms = parseInput(input);
+                const validation = validateFloorplan(rooms);
+
+                // Check if there are errors
+                if (validation.errors.length > 0) {
+                    let errorText = '❌ ERRORS:\n\n';
+                    validation.errors.forEach((err, idx) => {
+                        errorText += `${idx + 1}. ${err}\n\n`;
+                    });
+
+                    if (validation.warnings.length > 0) {
+                        errorText += '\n⚠️ WARNINGS:\n\n';
+                        validation.warnings.forEach((warn, idx) => {
+                            errorText += `${idx + 1}. ${warn}\n\n`;
+                        });
+                    }
+
+                    errorMsg.innerHTML = errorText.replace(/\n/g, '<br>');
+                    errorMsg.style.display = 'block';
+                    return; // Don't generate if there are errors
+                }
+
+                // If only warnings, display them but continue
+                if (validation.warnings.length > 0) {
+                    let warningText = '⚠️ WARNINGS:\n\n';
+                    validation.warnings.forEach((warn, idx) => {
+                        warningText += `${idx + 1}. ${warn}\n\n`;
+                    });
+                    warningText += '\nFloorplan generated with warnings.';
+
+                    errorMsg.innerHTML = warningText.replace(/\n/g, '<br>');
+                    errorMsg.style.display = 'block';
+                    errorMsg.style.backgroundColor = '#fff3cd';
+                    errorMsg.style.borderColor = '#ffc107';
+                    errorMsg.style.color = '#856404';
+                } else {
+                    errorMsg.style.backgroundColor = '#ffebee';
+                    errorMsg.style.borderColor = '#ef5350';
+                    errorMsg.style.color = '#d32f2f';
+                }
+
+                const roomGeometries = layoutRooms(rooms);
+                const svg = generateSVG(roomGeometries);
+
+                document.getElementById('svgContainer').innerHTML = svg;
+
+                // Initialize pan and zoom after SVG is created
+                initPanZoom();
+            } catch (error) {
+                // Display detailed error message for parsing errors
+                let errorText = '❌ ERROR:\n\n';
+
+                // Add helpful context for common errors
+                if (error.message.includes('Cannot read property') || error.message.includes('undefined')) {
+                    errorText += 'Syntax error in measurement plan. Please check:\n• Room names end with a colon (":")\n• Wall names are indented with 2 spaces and end with a colon\n• Measurements are indented with 4 spaces and start with a dash ("- ")\n• Quoted room names use proper quotes\n\nOriginal error: ' + error.message;
+                } else {
+                    errorText += error.message;
+                }
+
+                errorMsg.innerHTML = errorText.replace(/\n/g, '<br>');
+                errorMsg.style.display = 'block';
+                errorMsg.style.backgroundColor = '#ffebee';
+                errorMsg.style.borderColor = '#ef5350';
+                errorMsg.style.color = '#d32f2f';
+                console.error(error);
+            }
+        }
+
+        function initPanZoom() {
+            const svg = document.querySelector('#svgContainer svg');
+            if (!svg) return;
+
+            const container = document.getElementById('svgContainer');
+
+            // Store original viewBox from data attributes
+            const width = parseFloat(svg.getAttribute('data-width'));
+            const height = parseFloat(svg.getAttribute('data-height'));
+            viewBox = { x: 0, y: 0, width: width, height: height };
+            svg.style.cursor = 'grab';
+
+            // Mouse wheel zoom (smaller increments for smoother zooming)
+            container.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const delta = e.deltaY > 0 ? 1.05 : 0.95;
+                zoom(delta, e.offsetX, e.offsetY);
+            });
+
+            // Mouse pan
+            svg.addEventListener('mousedown', (e) => {
+                isPanning = true;
+                svg.style.cursor = 'grabbing';
+                startPoint = { x: e.clientX, y: e.clientY };
+            });
+
+            svg.addEventListener('mousemove', (e) => {
+                if (!isPanning) return;
+
+                const dx = (e.clientX - startPoint.x) * (viewBox.width / svg.clientWidth);
+                const dy = (e.clientY - startPoint.y) * (viewBox.height / svg.clientHeight);
+
+                viewBox.x -= dx;
+                viewBox.y -= dy;
+
+                svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
+
+                startPoint = { x: e.clientX, y: e.clientY };
+            });
+
+            svg.addEventListener('mouseup', () => {
+                isPanning = false;
+                svg.style.cursor = 'grab';
+            });
+
+            svg.addEventListener('mouseleave', () => {
+                isPanning = false;
+                svg.style.cursor = 'grab';
+            });
+
+            updateZoomInfo();
+        }
+
+        function zoom(factor, centerX, centerY) {
+            const svg = document.querySelector('#svgContainer svg');
+            if (!svg) return;
+
+            const oldWidth = viewBox.width;
+            const oldHeight = viewBox.height;
+
+            viewBox.width *= factor;
+            viewBox.height *= factor;
+
+            // Zoom towards cursor position
+            if (centerX !== undefined && centerY !== undefined) {
+                const relX = centerX / svg.clientWidth;
+                const relY = centerY / svg.clientHeight;
+
+                viewBox.x += (oldWidth - viewBox.width) * relX;
+                viewBox.y += (oldHeight - viewBox.height) * relY;
+            } else {
+                // Center zoom
+                viewBox.x += (oldWidth - viewBox.width) / 2;
+                viewBox.y += (oldHeight - viewBox.height) / 2;
+            }
+
+            svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
+
+            zoomLevel = parseFloat(svg.getAttribute('data-width')) / viewBox.width;
+            updateZoomInfo();
+        }
+
+        function zoomIn() {
+            zoom(0.8);
+        }
+
+        function zoomOut() {
+            zoom(1.25);
+        }
+
+        function resetZoom() {
+            const svg = document.querySelector('#svgContainer svg');
+            if (!svg) return;
+
+            const width = parseFloat(svg.getAttribute('data-width'));
+            const height = parseFloat(svg.getAttribute('data-height'));
+            viewBox = { x: 0, y: 0, width: width, height: height };
+            svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+            zoomLevel = 1.0;
+            updateZoomInfo();
+        }
+
+        function updateZoomInfo() {
+            const zoomPercent = Math.round(zoomLevel * 100);
+            document.getElementById('zoomInfo').textContent = `${zoomPercent}%`;
+        }
+
+        function downloadSVG() {
+            const svg = document.querySelector('#svgContainer svg');
+            if (!svg) return;
+
+            // Clone and reset viewBox for export
+            const svgClone = svg.cloneNode(true);
+            const width = svgClone.getAttribute('data-width');
+            const height = svgClone.getAttribute('data-height');
+            svgClone.setAttribute('viewBox', `0 0 ${width} ${height}`);
+            svgClone.setAttribute('width', width);
+            svgClone.setAttribute('height', height);
+
+            const svgData = new XMLSerializer().serializeToString(svgClone);
+            const blob = new Blob([svgData], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'floorplan.svg';
+            link.click();
+
+            URL.revokeObjectURL(url);
+        }
+
+        function downloadPNG() {
+            const svg = document.querySelector('#svgContainer svg');
+            if (!svg) return;
+
+            // Clone and reset viewBox for export
+            const svgClone = svg.cloneNode(true);
+            const width = parseFloat(svgClone.getAttribute('data-width'));
+            const height = parseFloat(svgClone.getAttribute('data-height'));
+            svgClone.setAttribute('viewBox', `0 0 ${width} ${height}`);
+            svgClone.setAttribute('width', width);
+            svgClone.setAttribute('height', height);
+
+            const svgData = new XMLSerializer().serializeToString(svgClone);
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+
+            img.onload = function() {
+                ctx.drawImage(img, 0, 0);
+                canvas.toBlob(function(blob) {
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = 'floorplan.png';
+                    link.click();
+                    URL.revokeObjectURL(url);
+                });
+            };
+
+            const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            img.src = url;
+        }
+
+        function downloadPDF() {
+            const svg = document.querySelector('#svgContainer svg');
+            if (!svg) return;
+
+            // Clone and reset viewBox for export
+            const svgClone = svg.cloneNode(true);
+            const width = parseFloat(svgClone.getAttribute('data-width'));
+            const height = parseFloat(svgClone.getAttribute('data-height'));
+            svgClone.setAttribute('viewBox', `0 0 ${width} ${height}`);
+            svgClone.setAttribute('width', width);
+            svgClone.setAttribute('height', height);
+
+            const svgData = new XMLSerializer().serializeToString(svgClone);
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+
+            img.onload = function() {
+                ctx.drawImage(img, 0, 0);
+
+                const { jsPDF } = window.jspdf;
+
+                // Convert pixels to mm for PDF (assuming 96 DPI)
+                const pdfWidth = width * 0.264583;
+                const pdfHeight = height * 0.264583;
+
+                const pdf = new jsPDF({
+                    orientation: pdfWidth > pdfHeight ? 'landscape' : 'portrait',
+                    unit: 'mm',
+                    format: [pdfWidth, pdfHeight]
+                });
+
+                const imgData = canvas.toDataURL('image/png');
+                pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+                pdf.save('floorplan.pdf');
+            };
+
+            const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            img.src = url;
+        }
+
+        // Pan function for keyboard navigation
+        function pan(deltaX, deltaY) {
+            const svg = document.querySelector('#svgContainer svg');
+            if (!svg) return;
+
+            const panAmount = 50; // pixels to pan
+            viewBox.x += deltaX * panAmount;
+            viewBox.y += deltaY * panAmount;
+
+            svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Check if Ctrl (or Cmd on Mac) is pressed
+            const ctrlPressed = e.ctrlKey || e.metaKey;
+
+            if (ctrlPressed) {
+                // Zoom shortcuts
+                if (e.key === '+' || e.key === '=') {
+                    e.preventDefault();
+                    zoomIn();
+                } else if (e.key === '-' || e.key === '_') {
+                    e.preventDefault();
+                    zoomOut();
+                } else if (e.key === '0') {
+                    e.preventDefault();
+                    resetZoom();
+                }
+                // Arrow key navigation
+                else if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    pan(-1, 0);
+                } else if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    pan(1, 0);
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    pan(0, -1);
+                } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    pan(0, 1);
+                }
+            }
+        });
+
+        // Generate on load
+        window.onload = generateFloorplan;
+    </script>
+</body>
+</html>
